@@ -1,37 +1,16 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
 
-# Virtual Environment
-.venv/
 venv/
-env/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
 
-# Jupyter
-.ipynb_checkpoints/
-
-# ML Models and Artifacts
-models/*.pkl
-models/*.joblib
+mlflow.db
 mlruns/
-mlartifacts/
 
-# Dataset files
-/data/
-
-# Environment Variables
+data/raw/
 .env
-.env.*
 
-# Logs
-*.log
-logs/
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
+# Keep the deployment model in Git
+!models/
+!models/champion.joblib
