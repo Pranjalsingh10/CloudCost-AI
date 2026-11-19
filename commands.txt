@@ -1,1 +1,7 @@
 mlflow ui --backend-store-uri sqlite:///C:/Users/singh/Desktop/CloudCost/CloudCost-AI/mlflow.db --port 5000
+
+uvicorn src.api:app --reload
+
+docker build -t cloudcost-ai .
+
+docker run -p 8000:8000 cloudcost-ai

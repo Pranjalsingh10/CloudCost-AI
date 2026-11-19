@@ -1,18 +1,23 @@
 
 from pathlib import Path
+import joblib
 import mlflow
 import numpy as np
 import pandas as pd
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-TRACKING_URI = f"sqlite:///{(ROOT_DIR / 'mlflow.db').as_posix()}"
+MODEL_PATH = ROOT_DIR / "models" / "champion.joblib"
 
-mlflow.set_tracking_uri(TRACKING_URI)
-mlflow.set_registry_uri(TRACKING_URI)
+_model = None
 
-MODEL_URI = "models:/CloudCostAI_CPU_Forecaster@champion"
 
-model = mlflow.pyfunc.load_model(MODEL_URI)
+def get_model():
+    global _model
+
+    if _model is None:
+        _model = joblib.load(MODEL_PATH)
+
+    return _model
 
 FEATURES = [
     "lag_1",
@@ -53,6 +58,6 @@ def create_input_features(cpu_history: list[float]) -> pd.DataFrame:
 
 def predict_cpu(cpu_history: list[float]) -> float:
     features = create_input_features(cpu_history)
-    prediction = model.predict(features)[0]
+    prediction = get_model().predict(features)[0]
 
     return float(np.clip(prediction, 0, 100))
