@@ -1,61 +1,58 @@
 
-import pandas as pd
+from src.data_loader import load_dataset
 
-from src.data_loader import DATA_DIR, load_vm_data
 
-# Load the sample VM
-file_path = DATA_DIR / "2013-8" / "1250.csv"
-df = load_vm_data(file_path)
+def inspect_dataset(data):
+    print("=" * 50)
+    print("DATASET OVERVIEW")
+    print("=" * 50)
 
-timestamp_col = "Timestamp [ms]"
+    print("\nShape:", data.shape)
 
-# Interpret timestamps as Unix seconds
-timestamps_seconds = pd.to_datetime(
-    df[timestamp_col],
-    unit="s",
-    utc=True
-)
+    print("\nColumns:")
+    print(data.columns.tolist())
 
-# Also interpret them as milliseconds for comparison
-timestamps_milliseconds = pd.to_datetime(
-    df[timestamp_col],
-    unit="ms",
-    utc=True
-)
+    print("\nNumber of VMs:")
+    print(data["vm_id"].nunique())
 
-# Calculate time differences between consecutive observations
-time_differences = df[timestamp_col].diff()
+    print("\nRows per VM:")
+    print(data.groupby("vm_id").size().describe())
 
-print("\n--- TIMESTAMP UNIT COMPARISON ---")
-print("If interpreted as seconds:")
-print(timestamps_seconds.head())
+    print("\nMissing values:")
+    print(data.isnull().sum())
 
-print("\nIf interpreted as milliseconds:")
-print(timestamps_milliseconds.head())
+    print("\nCPU statistics:")
+    print(
+        data[["min_cpu", "max_cpu", "avg_cpu"]]
+        .describe()
+    )
 
-print("\n--- TIME INTERVAL ANALYSIS ---")
-print("Most common interval:")
-print(time_differences.value_counts().head())
+    print("\nVM categories:")
+    print(data["vm_category"].value_counts(dropna=False))
 
-print("\nInterval statistics:")
-print(time_differences.describe())
+    print("\nMeasurements per VM:")
+    counts = data.groupby("vm_id").size()
 
-print("\n--- TIMESTAMP QUALITY ---")
-print("Duplicate timestamps:", df[timestamp_col].duplicated().sum())
-print("Missing timestamps:", df[timestamp_col].isna().sum())
-print("First timestamp:", timestamps_seconds.min())
-print("Last timestamp:", timestamps_seconds.max())
-print("Total duration:", timestamps_seconds.max() - timestamps_seconds.min())
+    print("Exactly 134 measurements:", (counts == 134).all())
 
-print("\n--- RESOURCE VALUE CHECKS ---")
-resource_columns = [
-    "CPU usage [%]",
-    "CPU usage [MHZ]",
-    "Memory usage [KB]",
-    "Disk read throughput [KB/s]",
-    "Disk write throughput [KB/s]",
-    "Network received throughput [KB/s]",
-    "Network transmitted throughput [KB/s]",
-]
+    print("\nTimestamp intervals:")
+    intervals = (
+        data.sort_values(["vm_id", "timestamp"])
+        .groupby("vm_id")["timestamp"]
+        .diff()
+        .dropna()
+    )
 
-print(df[resource_columns].describe().round(2))
+    print(intervals.value_counts().head())
+
+    print("\nMetadata CPU statistics:")
+    print(
+        data[
+            ["vm_metadata_max_cpu", "vm_metadata_avg_cpu"]
+        ].describe()
+    )
+
+
+if __name__ == "__main__":
+    dataset = load_dataset(num_vms=100)
+    inspect_dataset(dataset)
