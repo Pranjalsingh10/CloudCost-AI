@@ -1,0 +1,3 @@
+"""
+CloudCost project package.
+"""
