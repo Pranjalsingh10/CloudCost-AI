@@ -1,0 +1,1 @@
+mlflow ui --backend-store-uri sqlite:///C:/Users/singh/Desktop/CloudCost/CloudCost-AI/mlflow.db --port 5000

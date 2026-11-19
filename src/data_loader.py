@@ -1,93 +1,92 @@
+
+import hashlib
 from pathlib import Path
+
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = PROJECT_ROOT / "data" / "raw" / "fastStorage"
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+
+RAW_DIR = ROOT_DIR / "data" / "raw" / "azure_v1"
+PROCESSED_DIR = ROOT_DIR / "data" / "processed"
+
+CPU_FILE = RAW_DIR / "vm_cpu_readings.csv.gz"
+METADATA_FILE = RAW_DIR / "vm_metadata.csv.gz"
+
+SUBSET_FILE = PROCESSED_DIR / "vm_cpu_subset.csv"
 
 
-def load_single_csv(file_path):
-    """Load a single VM CSV file."""
+def load_raw_data():
+    cpu_data = pd.read_csv(CPU_FILE, compression="gzip")
+    metadata = pd.read_csv(METADATA_FILE, compression="gzip")
 
-    df = pd.read_csv(
-        file_path,
-        sep=";",
-        skipinitialspace=True,
-        low_memory=False
+    return cpu_data, metadata
+
+
+def select_vms(cpu_data, num_vms=100):
+    vm_ids = cpu_data["vm_id"].unique()
+
+    ranked_vm_ids = sorted(
+        vm_ids,
+        key=lambda vm_id: hashlib.sha256(
+            str(vm_id).encode()
+        ).hexdigest()
     )
 
-    # Clean column names
-    df.columns = (
-        df.columns.astype(str)
-        .str.replace("\t", "", regex=False)
-        .str.strip()
+    selected_vms = ranked_vm_ids[:num_vms]
+
+    subset = cpu_data[
+        cpu_data["vm_id"].isin(selected_vms)
+    ].copy()
+
+    return subset
+
+
+def load_dataset(num_vms=100, save=True):
+    cpu_data, metadata = load_raw_data()
+
+    cpu_subset = select_vms(
+        cpu_data,
+        num_vms
     )
 
-    # Remove empty columns
-    df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
+    metadata = metadata.rename(columns={
+        "max_cpu": "vm_metadata_max_cpu",
+        "avg_cpu": "vm_metadata_avg_cpu"
+    })
 
-    # Remove trailing spaces from column names
-    df.columns = df.columns.str.strip()
+    dataset = cpu_subset.merge(
+        metadata,
+        on="vm_id",
+        how="left",
+        validate="many_to_one"
+    )
 
-    # VM ID comes from filename
-    df["vm_id"] = file_path.stem
+    dataset = dataset.sort_values(
+        ["vm_id", "timestamp"]
+    ).reset_index(drop=True)
 
-    return df
+    if save:
+        PROCESSED_DIR.mkdir(
+            parents=True,
+            exist_ok=True
+        )
 
+        dataset.to_csv(
+            SUBSET_FILE,
+            index=False
+        )
 
-def get_csv_files():
-    """Find CSV files recursively."""
+        print(f"Subset saved to: {SUBSET_FILE}")
 
-    if not DATA_DIR.exists():
-        raise FileNotFoundError(f"Data directory not found: {DATA_DIR}")
-
-    files = sorted(DATA_DIR.rglob("*.csv"))
-
-    if not files:
-        raise FileNotFoundError(f"No CSV files found in {DATA_DIR}")
-
-    return files
-
-
-def load_all_data():
-    """Load all CSVs and combine them."""
-
-    files = get_csv_files()
-
-    print(f"Found {len(files)} CSV files.")
-
-    dataframes = []
-
-    for i, file_path in enumerate(files, start=1):
-        df = load_single_csv(file_path)
-
-        if "Timestamp [ms]" not in df.columns:
-            raise ValueError(
-                f"Timestamp column missing in {file_path}"
-            )
-
-        dataframes.append(df)
-
-        if i % 100 == 0:
-            print(f"Loaded {i}/{len(files)} files")
-
-    combined_df = pd.concat(dataframes, ignore_index=True)
-
-    print("Combined dataset shape:", combined_df.shape)
-
-    return combined_df
+    return dataset
 
 
 if __name__ == "__main__":
-    files = get_csv_files()
+    data = load_dataset(num_vms=100)
 
-    print(f"Found {len(files)} CSV files.")
-    print("First file:", files[0])
-
-    df = load_single_csv(files[0])
-
-    print("\nSingle-file shape:", df.shape)
-    print("\nColumns:")
-    print(df.columns.tolist())
-
-    print("\nFirst 5 rows:")
-    print(df.head().to_string())
+    print("\nDataset shape:", data.shape)
+    print("\nColumns:", data.columns.tolist())
+    print("\nVM count:", data["vm_id"].nunique())
+    print("\nPreview:")
+    print(data.head())

@@ -1,174 +1,131 @@
 
-from pathlib import Path
 import pandas as pd
 
-from src.data_loader import get_csv_files, load_single_csv
 
+TARGET = "avg_cpu"
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
-
-TIMESTAMP_COLUMN = "Timestamp [ms]"
-
-ROLLING_COLUMNS = [
-    "CPU usage [%]",
-    "Memory usage [KB]",
-    "Disk read throughput [KB/s]",
-    "Disk write throughput [KB/s]",
-    "Network received throughput [KB/s]",
-    "Network transmitted throughput [KB/s]",
+FEATURES = [
+    "lag_1",
+    "lag_2",
+    "lag_3",
+    "lag_6",
+    "lag_12",
+    "rolling_mean_3",
+    "rolling_mean_6",
+    "rolling_std_6",
+    "rolling_max_6",
 ]
 
 
-def clean_data(df):
-    df = df.copy()
-
-    if TIMESTAMP_COLUMN not in df.columns:
-        raise ValueError(f"Missing column: {TIMESTAMP_COLUMN}")
-
-    # Timestamp values are Unix seconds
-    df[TIMESTAMP_COLUMN] = pd.to_numeric(
-        df[TIMESTAMP_COLUMN],
-        errors="coerce"
-    )
-
-    df[TIMESTAMP_COLUMN] = pd.to_datetime(
-        df[TIMESTAMP_COLUMN],
-        unit="s",
-        errors="coerce",
-        utc=True
-    )
-
-    df = df.dropna(subset=[TIMESTAMP_COLUMN])
-
-    # Remove duplicate records
-    df = df.drop_duplicates()
-
-    # Convert numeric resource columns but preserve vm_id
-    for column in df.columns:
-        if column not in [TIMESTAMP_COLUMN, "vm_id"]:
-            df[column] = pd.to_numeric(
-                df[column],
-                errors="coerce"
-            )
-
-    # Remove rows that have no resource measurements
-    resource_columns = [
-        c for c in df.columns
-        if c not in [TIMESTAMP_COLUMN, "vm_id"]
+def validate_data(data):
+    required_columns = [
+        "vm_id",
+        "timestamp",
+        "avg_cpu",
     ]
 
-    df = df.dropna(
-        subset=resource_columns,
-        how="all"
+    missing_columns = [
+        column for column in required_columns
+        if column not in data.columns
+    ]
+
+    if missing_columns:
+        raise ValueError(f"Missing columns: {missing_columns}")
+
+    if data[required_columns].isnull().any().any():
+        raise ValueError("Missing values found in required columns")
+
+    if data.duplicated(["vm_id", "timestamp"]).any():
+        raise ValueError("Duplicate VM timestamp records found")
+
+    data = data.sort_values(
+        ["vm_id", "timestamp"]
+    ).copy()
+
+    intervals = (
+        data.groupby("vm_id")["timestamp"]
+        .diff()
+        .dropna()
     )
 
-    df = df.sort_values(
-        TIMESTAMP_COLUMN
-    ).reset_index(drop=True)
+    if not intervals.eq(300).all():
+        raise ValueError("Unexpected timestamp intervals detected")
 
-    return df
+    return data
 
 
-def create_features(df):
-    df = df.copy()
+def create_features(data):
+    data = validate_data(data)
 
-    timestamp = df[TIMESTAMP_COLUMN]
+    grouped = data.groupby("vm_id")["avg_cpu"]
 
-    # Time features
-    df["hour"] = timestamp.dt.hour
-    df["day_of_week"] = timestamp.dt.dayofweek
-    df["month"] = timestamp.dt.month
-    df["is_weekend"] = (df["day_of_week"] >= 5).astype("int8")
+    data["lag_1"] = grouped.shift(1)
+    data["lag_2"] = grouped.shift(2)
+    data["lag_3"] = grouped.shift(3)
+    data["lag_6"] = grouped.shift(6)
+    data["lag_12"] = grouped.shift(12)
 
-    # Rolling features per VM
-    for column in ROLLING_COLUMNS:
-
-        if column not in df.columns:
-            continue
-
-        df[f"{column}_rolling_mean_3"] = (
-            df[column]
-            .rolling(window=3, min_periods=1)
-            .mean()
+    data["rolling_mean_3"] = (
+        grouped.transform(
+            lambda values: values.shift(1).rolling(3).mean()
         )
+    )
 
-        df[f"{column}_rolling_mean_6"] = (
-            df[column]
-            .rolling(window=6, min_periods=1)
-            .mean()
+    data["rolling_mean_6"] = (
+        grouped.transform(
+            lambda values: values.shift(1).rolling(6).mean()
         )
+    )
 
-        df[f"{column}_rolling_std_6"] = (
-            df[column]
-            .rolling(window=6, min_periods=1)
-            .std()
-            .fillna(0)
+    data["rolling_std_6"] = (
+        grouped.transform(
+            lambda values: values.shift(1).rolling(6).std()
         )
+    )
 
-    return df
-
-
-def run_preprocessing():
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-
-    cleaned_path = PROCESSED_DIR / "cleaned_data.csv"
-    features_path = PROCESSED_DIR / "features.csv"
-
-    files = get_csv_files()
-
-    print(f"Processing {len(files)} VM files.")
-
-    # Remove old output files before starting
-    for path in [cleaned_path, features_path]:
-        if path.exists():
-            path.unlink()
-
-    total_rows = 0
-    processed_files = 0
-
-    for i, file_path in enumerate(files, start=1):
-
-        # Load one VM at a time
-        raw_df = load_single_csv(file_path)
-
-        cleaned_df = clean_data(raw_df)
-        features_df = create_features(cleaned_df)
-
-        # Write incrementally
-        cleaned_df.to_csv(
-            cleaned_path,
-            mode="a",
-            index=False,
-            header=(i == 1)
+    data["rolling_max_6"] = (
+        grouped.transform(
+            lambda values: values.shift(1).rolling(6).max()
         )
+    )
 
-        features_df.to_csv(
-            features_path,
-            mode="a",
-            index=False,
-            header=(i == 1)
-        )
+    data = data.dropna(subset=FEATURES + [TARGET])
 
-        total_rows += len(cleaned_df)
-        processed_files += 1
-
-        if i % 50 == 0 or i == len(files):
-            print(
-                f"Processed {i}/{len(files)} files | "
-                f"Rows: {total_rows:,}"
-            )
-
-        del raw_df, cleaned_df, features_df
-
-    print("\n========== PREPROCESSING COMPLETE ==========")
-    print("VM files processed:", processed_files)
-    print("Total rows:", f"{total_rows:,}")
-    print("Cleaned data:", cleaned_path)
-    print("Features:", features_path)
-
-    return cleaned_path, features_path
+    return data
 
 
-if __name__ == "__main__":
-    run_preprocessing()
+def temporal_split(data, test_ratio=0.2):
+    timestamps = sorted(data["timestamp"].unique())
+
+    split_index = int(len(timestamps) * (1 - test_ratio))
+
+    split_timestamp = timestamps[split_index]
+
+    train_data = data[data["timestamp"] < split_timestamp]
+    test_data = data[data["timestamp"] >= split_timestamp]
+
+    X_train = train_data[FEATURES]
+    y_train = train_data[TARGET]
+
+    X_test = test_data[FEATURES]
+    y_test = test_data[TARGET]
+
+    print("\nTemporal split timestamp:", split_timestamp)
+    print("Train rows:", len(X_train))
+    print("Test rows:", len(X_test))
+
+    print(
+        "Train time range:",
+        train_data["timestamp"].min(),
+        "to",
+        train_data["timestamp"].max()
+    )
+
+    print(
+        "Test time range:",
+        test_data["timestamp"].min(),
+        "to",
+        test_data["timestamp"].max()
+    )
+
+    return X_train, X_test, y_train, y_test
